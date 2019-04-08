@@ -14,20 +14,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class ProductDaoImpl implements ProductDao {
-    private static final String SAVE_QUERY =
-            "INSERT INTO products(name, producer, price, expiration_date)" +
-                    "VALUES (?,?,?,?)";
-
-    private static final String FIND_ALL_QUERY = "SELECT * FROM products";
-
-    private static final String FIND_ONE_QUERY = "SELECT * FROM products WHERE id = ?";
-
-    private static final String UPDATE_QUERY =
-            "UPDATE products " +
-                    "SET name=?, producer=?,price=?, expiration_date=?" +
-                    "WHERE id = ?";
-
-    private static final String REMOVE_QUERY = "DELETE FROM products WHERE id=?";
+    private static String SAVE_SQL = "INSERT INTO products(name, producer, price, expiration_date) VALUES (?,?,?,?)";
+    private static String FIND_ALL_SQL = "SELECT * FROM products";
+    private static String FIND_ONE_SQL = "SELECT * FROM products WHERE id = ?";
+    private static String UPDATE_SQL = "UPDATE products SET name = ?, producer = ?, price = ?, expiration_date = ? WHERE id = ?";
+    private static String REMOVE_SQL = "DELETE FROM products WHERE id = ?";
 
     private DataSource dataSource;
 
@@ -38,24 +29,31 @@ public class ProductDaoImpl implements ProductDao {
     @Override
     public void save(Product product) {
         try (Connection connection = dataSource.getConnection()) {
-            PreparedStatement statement = connection.prepareStatement(SAVE_QUERY, Statement.RETURN_GENERATED_KEYS);
-            setProductToPreparedStatement(product, statement, true);
-            statement.execute();
+            PreparedStatement statement = connection.prepareStatement(SAVE_SQL, Statement.RETURN_GENERATED_KEYS);
+            setStatementWithProduct(product, statement);
+            statement.executeUpdate();
             ResultSet generatedKeys = statement.getGeneratedKeys();
             if (generatedKeys.next()) {
-                long productId = generatedKeys.getLong(1);
-                product.setId(productId);
+                long id = generatedKeys.getLong(1);
+                product.setId(id);
             }
         } catch (SQLException e) {
-            throw new DaoOperationException("Error saving product: " + product);
+            throw new DaoOperationException("Error saving product: " + product, e);
         }
+    }
+
+    private void setStatementWithProduct(Product product, PreparedStatement statement) throws SQLException {
+        statement.setString(1, product.getName());
+        statement.setString(2, product.getProducer());
+        statement.setBigDecimal(3, product.getPrice());
+        statement.setDate(4, Date.valueOf(product.getExpirationDate()));
     }
 
     @Override
     public List<Product> findAll() {
         try (Connection connection = dataSource.getConnection()) {
             Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery(FIND_ALL_QUERY);
+            ResultSet resultSet = statement.executeQuery(FIND_ALL_SQL);
             List<Product> products = new ArrayList<>();
             while (resultSet.next()) {
                 Product product = productFromResultSet(resultSet);
@@ -63,77 +61,75 @@ public class ProductDaoImpl implements ProductDao {
             }
             return products;
         } catch (SQLException e) {
-            throw new DaoOperationException("exception");
+            throw new DaoOperationException("Exception", e);
         }
+    }
+
+    private Product productFromResultSet(ResultSet resultSet) throws SQLException {
+        return Product.builder()
+                .id(resultSet.getLong("id"))
+                .name(resultSet.getString("name"))
+                .producer(resultSet.getString("producer"))
+                .price(resultSet.getBigDecimal("price"))
+                .expirationDate(resultSet.getDate("expiration_date").toLocalDate())
+                .creationTime(resultSet.getTimestamp("creation_time").toLocalDateTime())
+                .build();
     }
 
     @Override
     public Product findOne(Long id) {
         try (Connection connection = dataSource.getConnection()) {
-            PreparedStatement statement = connection.prepareStatement(FIND_ONE_QUERY);
+            PreparedStatement statement = connection.prepareStatement(FIND_ONE_SQL);
             statement.setLong(1, id);
             ResultSet resultSet = statement.executeQuery();
-            resultSet.next();
-            return productFromResultSet(resultSet);
+            if (resultSet.next()) {
+                return productFromResultSet(resultSet);
+            } else {
+                String message = String.format("Product with id = %d does not exist", id);
+                throw new DaoOperationException(message);
+            }
         } catch (SQLException e) {
-            String message = String.format("Product with id = %s does not exist", id);
-            throw new DaoOperationException(message);
+            throw new DaoOperationException("Exception", e);
         }
     }
 
     @Override
     public void update(Product product) {
+        verifyIndex(product.getId());
         try (Connection connection = dataSource.getConnection()) {
-            PreparedStatement statement = connection.prepareStatement(UPDATE_QUERY);
-            setProductToPreparedStatement(product, statement, false);
-            statement.executeUpdate();
+            PreparedStatement statement = connection.prepareStatement(UPDATE_SQL);
+            setStatementWithProduct(product, statement);
+            statement.setLong(5, product.getId());
+            executeUpdateAndVerify(statement, product);
         } catch (SQLException e) {
-            throw new DaoOperationException("Exception occurred during update...");
+            throw new DaoOperationException("Exception", e);
         }
     }
 
     @Override
     public void remove(Product product) {
-        verifyId(product.getId());
+        verifyIndex(product.getId());
         try (Connection connection = dataSource.getConnection()) {
-            PreparedStatement statement = connection.prepareStatement(REMOVE_QUERY);
+            PreparedStatement statement = connection.prepareStatement(REMOVE_SQL);
             statement.setLong(1, product.getId());
-            statement.executeUpdate();
+            executeUpdateAndVerify(statement, product);
         } catch (SQLException e) {
-            throw new DaoOperationException("Exception occurred during remove...");
+            throw new DaoOperationException("Exception", e);
         }
     }
 
-    private void setProductToPreparedStatement(Product product, PreparedStatement statement, boolean isNew) throws SQLException {
-        statement.setString(1, product.getName());
-        statement.setString(2, product.getProducer());
-        statement.setBigDecimal(3, product.getPrice());
-        Date expirationDate = Date.valueOf(product.getExpirationDate());
-        statement.setDate(4, expirationDate);
-        if (!isNew) {
-            verifyId(product.getId());
-            statement.setLong(5, product.getId());
-        }
-    }
-
-    private void verifyId(Long id) {
-        if (id == null) {
-            throw new DaoOperationException("Product id cannot be null");
-        }
-        if (id < 0) {
-            String message = String.format("Product with id = %s does not exist", id);
+    private void executeUpdateAndVerify(PreparedStatement statement, Product product) throws SQLException {
+        int rowsAffected = statement.executeUpdate();
+        if (rowsAffected == 0) {
+            String message = String.format("Product with id = %d does not exist", product.getId());
             throw new DaoOperationException(message);
         }
     }
 
-    private Product productFromResultSet(ResultSet resultSet) throws SQLException {
-        Product product = new Product();
-        product.setId(resultSet.getLong("id"));
-        product.setName(resultSet.getString("name"));
-        product.setProducer(resultSet.getString("producer"));
-        product.setPrice(resultSet.getBigDecimal("price"));
-        product.setExpirationDate(resultSet.getDate("expiration_date").toLocalDate());
-        product.setCreationTime(resultSet.getTimestamp("creation_time").toLocalDateTime());
-        return product;
+    private void verifyIndex(Long id) {
+        if (id == null) {
+            throw new DaoOperationException("Product id cannot be null");
+        }
     }
+
 }
