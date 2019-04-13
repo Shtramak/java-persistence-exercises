@@ -1,9 +1,18 @@
 package ua.procamp.model;
 
+import lombok.AccessLevel;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.NaturalId;
 
+import javax.persistence.Column;
+import javax.persistence.Entity;
+import javax.persistence.GeneratedValue;
+import javax.persistence.Id;
+import javax.persistence.ManyToMany;
+import javax.persistence.Table;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -26,9 +35,18 @@ import java.util.Set;
 @NoArgsConstructor
 @Getter
 @Setter
+@EqualsAndHashCode(of = "isbn")
+@Entity
+@Table(name = "book")
 public class Book {
+    @Id
+    @GeneratedValue
     private Long id;
+    @Column(nullable = false)
     private String name;
+    @NaturalId
     private String isbn;
-    private Set<Author> authors;
+    @ManyToMany(mappedBy = "books")
+    @Setter(AccessLevel.PRIVATE)
+    private Set<Author> authors = new HashSet<>();
 }
